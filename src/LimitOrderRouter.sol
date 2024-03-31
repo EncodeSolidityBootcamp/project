@@ -11,6 +11,7 @@ import "forge-std/console.sol";
   using SafeERC20 for IERC20;
 
 error OrderAlreadyFilled(bytes32 orderHash);
+error SlippageLimitExceeded(address tokenAddress, uint256 expectedAmount, uint256 actualAmount);
 
 contract LimitOrderRouter is EIP712 {
 

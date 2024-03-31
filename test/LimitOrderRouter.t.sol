@@ -120,4 +120,29 @@ contract LimitOrderRouterTest is Test {
     uint256 usdcBalanceDiff = IERC20(DAI).balanceOf(SIGNER_ADDRESS) - usdcBalanceBefore;
     assertTrue(usdcBalanceDiff == 3604079859440036233885);
   }
+
+  function test_swap_reverts() public {
+    // construct order with default test parameters
+    LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
+    order.output.tokenAmount = 4000 * 1e18;
+
+    // sign order
+    bytes memory signature = getOrderSignature(order);
+
+    vm.prank(WETH_OWNER);
+    IERC20(order.input.tokenAddress).transfer(SIGNER_ADDRESS, order.input.tokenAmount);
+
+    vm.prank(SIGNER_ADDRESS);
+    IERC20(order.input.tokenAddress).approve(address(ROUTER), order.input.tokenAmount);
+
+    uint256 usdcBalanceBefore = IERC20(DAI).balanceOf(SIGNER_ADDRESS);
+
+
+    vm.expectRevert("Too little received");
+    // run test
+    ROUTER.fillLimitOrder(order, signature);
+
+    uint256 usdcBalanceDiff = IERC20(DAI).balanceOf(SIGNER_ADDRESS) - usdcBalanceBefore;
+    assertTrue(usdcBalanceDiff == 0);
+  }
 }
