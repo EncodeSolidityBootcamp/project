@@ -5,12 +5,16 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/ISwapRouter02.sol";
+import "forge-std/console.sol";
 
-using SafeERC20 for IERC20;
+  using SafeERC20 for IERC20;
 
 error OrderAlreadyFilled(bytes32 orderHash);
 
 contract LimitOrderRouter is EIP712 {
+
+  address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
 
   event LimitOrderFilled(
     bytes32 indexed orderHash,
@@ -81,10 +85,57 @@ contract LimitOrderRouter is EIP712 {
     }
 
     // Transfer tokens from order owner
-    IERC20(order.input.tokenAddress).safeTransferFrom(orderOwner, order.input.tokenAddress, order.input.tokenAmount);
+    console.log("orderOwner", orderOwner);
+    IERC20(order.input.tokenAddress).safeTransferFrom(orderOwner, address(this), order.input.tokenAmount);
+    IERC20(order.input.tokenAddress).approve(address(UNISWAP_ROUTER), order.input.tokenAmount);
 
     // Fill order
+    ISwapRouter02.ExactInputSingleParams memory params = ISwapRouter02
+      .ExactInputSingleParams({
+      tokenIn: order.input.tokenAddress,
+      tokenOut: order.output.tokenAddress,
+      fee: 3000,
+      recipient: orderOwner,
+      amountIn: order.input.tokenAmount,
+      amountOutMinimum: order.output.tokenAmount,
+      sqrtPriceLimitX96: 0
+    });
 
+    uint256 amountOut = ISwapRouter02(UNISWAP_ROUTER).exactInputSingle(params);
+
+    // Transfer tokens to the order owner - don't need, as Uniswap sends to the orderOwner
+    // IERC20(order.output.tokenAddress).safeTransfer(orderOwner, amountOut);
+
+    // emit event
+    emit LimitOrderFilled(
+      orderHash,
+      orderOwner,
+      order.input.tokenAddress,
+      order.output.tokenAddress,
+      order.input.tokenAmount,
+      amountOut
+    );
+  }
+
+  function swapExactInput(TokenInfo calldata input, TokenInfo calldata output)
+  internal
+  returns (uint256 amountOut)
+  {
+    //IERC20(input.tokenAddress).transferFrom(msg.sender, address(this), input.tokenAmount);
+    //IERC20(input.tokenAddress).approve(address(UNISWAP_ROUTER), input.tokenAmount);
+
+    ISwapRouter02.ExactInputSingleParams memory params = ISwapRouter02
+      .ExactInputSingleParams({
+      tokenIn: input.tokenAddress,
+      tokenOut: output.tokenAddress,
+      fee: 3000,
+      recipient: msg.sender,
+      amountIn: input.tokenAmount,
+      amountOutMinimum: output.tokenAmount,
+      sqrtPriceLimitX96: 0
+    });
+
+    return ISwapRouter02(UNISWAP_ROUTER).exactInputSingle(params);
   }
 
   function getLimitOrderHash(LimitOrder calldata order)
