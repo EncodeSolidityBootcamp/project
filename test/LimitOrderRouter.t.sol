@@ -17,7 +17,8 @@ contract LimitOrderRouterTest is Test {
     uint256 orderOutputAmount
   );
 
-  LimitOrderRouter immutable ROUTER = new LimitOrderRouter();
+  address constant SWAP_ROUTER_02 = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+  LimitOrderRouter immutable ROUTER = new LimitOrderRouter(address(this), SWAP_ROUTER_02);
   address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
   address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
   address constant WETH_OWNER = 0xF04a5cC80B1E94C69B48f5ee68a08CD2F09A7c3E;
@@ -121,7 +122,7 @@ contract LimitOrderRouterTest is Test {
     assertTrue(usdcBalanceDiff == 3604079859440036233885);
   }
 
-  function test_swap_reverts() public {
+  function test_swap_reverts_amount() public {
     // construct order with default test parameters
     LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
     order.output.tokenAmount = 4000 * 1e18;
@@ -137,12 +138,29 @@ contract LimitOrderRouterTest is Test {
 
     uint256 usdcBalanceBefore = IERC20(DAI).balanceOf(SIGNER_ADDRESS);
 
-
     vm.expectRevert("Too little received");
-    // run test
     ROUTER.fillLimitOrder(order, signature);
 
     uint256 usdcBalanceDiff = IERC20(DAI).balanceOf(SIGNER_ADDRESS) - usdcBalanceBefore;
     assertTrue(usdcBalanceDiff == 0);
   }
+
+  function test_swap_reverts_expired() public {
+    // construct order with default test parameters
+    LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
+    order.expiry = block.timestamp - 1;
+
+    // sign order
+    bytes memory signature = getOrderSignature(order);
+
+    vm.prank(WETH_OWNER);
+    IERC20(order.input.tokenAddress).transfer(SIGNER_ADDRESS, order.input.tokenAmount);
+
+    vm.prank(SIGNER_ADDRESS);
+    IERC20(order.input.tokenAddress).approve(address(ROUTER), order.input.tokenAmount);
+
+    vm.expectRevert(abi.encodeWithSelector(OrderExpired.selector, order.expiry, block.timestamp));
+    ROUTER.fillLimitOrder(order, signature);
+  }
+
 }

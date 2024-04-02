@@ -5,17 +5,18 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ISwapRouter02.sol";
-import "forge-std/console.sol";
 
-  using SafeERC20 for IERC20;
+using SafeERC20 for IERC20;
 
 error OrderAlreadyFilled(bytes32 orderHash);
+error OrderExpired(uint256 orderExpiry, uint256 currentTimestamp);
 error SlippageLimitExceeded(address tokenAddress, uint256 expectedAmount, uint256 actualAmount);
 
-contract LimitOrderRouter is EIP712 {
+contract LimitOrderRouter is EIP712, Ownable {
 
-  address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+  address immutable UNISWAP_ROUTER;
 
   event LimitOrderFilled(
     bytes32 indexed orderHash,
@@ -28,6 +29,7 @@ contract LimitOrderRouter is EIP712 {
 
   struct TokenInfo {
     address tokenAddress;
+    // Minimum token amount for output
     uint256 tokenAmount;
   }
 
@@ -58,10 +60,11 @@ contract LimitOrderRouter is EIP712 {
     ")"
   );
 
-  constructor()
+  constructor(address initialOwner, address uniswapRouter)
   EIP712("LimitOrderRouter", "1")
+  Ownable(initialOwner)
   {
-
+    UNISWAP_ROUTER = uniswapRouter;
   }
 
   function fillLimitOrder(
@@ -71,6 +74,9 @@ contract LimitOrderRouter is EIP712 {
   external
   returns (bytes32 orderHash) {
     // Checks
+    if (order.expiry < block.timestamp) {
+      revert OrderExpired(order.expiry, block.timestamp);
+    }
 
     // Get order hash
     orderHash = getLimitOrderHash(order);
@@ -86,7 +92,6 @@ contract LimitOrderRouter is EIP712 {
     }
 
     // Transfer tokens from order owner
-    console.log("orderOwner", orderOwner);
     IERC20(order.input.tokenAddress).safeTransferFrom(orderOwner, address(this), order.input.tokenAmount);
     IERC20(order.input.tokenAddress).approve(address(UNISWAP_ROUTER), order.input.tokenAmount);
 
