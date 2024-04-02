@@ -163,4 +163,24 @@ contract LimitOrderRouterTest is Test {
     ROUTER.fillLimitOrder(order, signature);
   }
 
+  function test_swap_reverts_cancelled() public {
+    // construct order with default test parameters
+    LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
+
+    // sign order
+    bytes memory signature = getOrderSignature(order);
+
+    bytes32 orderHash = ROUTER.getLimitOrderHash(order);
+    vm.prank(SIGNER_ADDRESS);
+    ROUTER.cancelLimitOrder(orderHash);
+
+    vm.prank(WETH_OWNER);
+    IERC20(order.input.tokenAddress).transfer(SIGNER_ADDRESS, order.input.tokenAmount);
+
+    vm.prank(SIGNER_ADDRESS);
+    IERC20(order.input.tokenAddress).approve(address(ROUTER), order.input.tokenAmount);
+
+    vm.expectRevert(abi.encodeWithSelector(OrderAlreadyFilledOrCancelled.selector, orderHash));
+    ROUTER.fillLimitOrder(order, signature);
+  }
 }

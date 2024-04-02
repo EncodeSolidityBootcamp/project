@@ -10,7 +10,7 @@ import "./interfaces/ISwapRouter02.sol";
 
 using SafeERC20 for IERC20;
 
-error OrderAlreadyFilled(bytes32 orderHash);
+error OrderAlreadyFilledOrCancelled(bytes32 orderHash);
 error OrderExpired(uint256 orderExpiry, uint256 currentTimestamp);
 error SlippageLimitExceeded(address tokenAddress, uint256 expectedAmount, uint256 actualAmount);
 
@@ -27,9 +27,14 @@ contract LimitOrderRouter is EIP712, Ownable {
     uint256 orderOutputAmount
   );
 
+  event LimitOrderCancelled(
+    bytes32 indexed orderHash,
+    address indexed orderOwner
+  );
+
   struct TokenInfo {
     address tokenAddress;
-    // Minimum token amount for output
+    // Minimum token amount for output token
     uint256 tokenAmount;
   }
 
@@ -88,7 +93,7 @@ contract LimitOrderRouter is EIP712, Ownable {
     uint256 filledAmount = limitOrders[orderOwner][orderHash];
 
     if (filledAmount != 0) {
-      revert OrderAlreadyFilled(orderHash);
+      revert OrderAlreadyFilledOrCancelled(orderHash);
     }
 
     // Transfer tokens from order owner
@@ -121,6 +126,15 @@ contract LimitOrderRouter is EIP712, Ownable {
       order.input.tokenAmount,
       amountOut
     );
+  }
+
+  function cancelLimitOrder(
+    bytes32 orderHash
+  )
+  external
+  {
+    limitOrders[msg.sender][orderHash] = type(uint256).max;
+    emit LimitOrderCancelled(orderHash, msg.sender);
   }
 
   function swapExactInput(TokenInfo calldata input, TokenInfo calldata output)
