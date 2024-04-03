@@ -7,14 +7,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ISwapRouter02.sol";
+import "./UniversalSigValidator.sol";
+import "forge-std/console.sol";
 
-using SafeERC20 for IERC20;
+  using SafeERC20 for IERC20;
 
 error OrderAlreadyFilledOrCancelled(bytes32 orderHash);
 error OrderExpired(uint256 orderExpiry, uint256 currentTimestamp);
 error SlippageLimitExceeded(address tokenAddress, uint256 expectedAmount, uint256 actualAmount);
+error InvalidEip1271Signature(bytes32 orderHash, address account, bytes signature);
 
-contract LimitOrderRouter is EIP712, Ownable {
+contract LimitOrderRouter is EIP712, Ownable, UniversalSigValidator {
 
   address immutable UNISWAP_ROUTER;
 
@@ -86,8 +89,25 @@ contract LimitOrderRouter is EIP712, Ownable {
     // Get order hash
     orderHash = getLimitOrderHash(order);
 
-    // Recover the orderOwner and validate signature
-    address orderOwner = ECDSA.recover(orderHash, signature);
+    address orderOwner;
+
+    if (signature.length == 65) {
+      // Recover the orderOwner and validate signature
+      orderOwner = ECDSA.recover(orderHash, signature);
+    } else {
+      assembly {
+        // account = address(encodedSignature[0:20])
+        orderOwner := shr(96, calldataload(signature.offset))
+      }
+      // the first 20 bytes of the encodedSignature contain the account address,
+      // and the remaining part of the bytes array contains the signature.
+      bytes calldata signature2 = signature[20:];
+
+      if (!isValidSig(orderOwner, orderHash, signature2)) {
+        revert InvalidEip1271Signature(orderHash, orderOwner, signature2);
+      }
+    }
+
 
     // Get order filled amount
     uint256 filledAmount = limitOrders[orderOwner][orderHash];

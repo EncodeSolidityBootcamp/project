@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 import "forge-std/Test.sol";
 import "../src/LimitOrderRouter.sol";
 import "./MockERC20.sol";
+import "./Create2Factory.sol";
+import {MockSmartContractWallet} from "./MockSmartContractWallet.sol";
 import "forge-std/console.sol";
 
 contract LimitOrderRouterTest is Test {
@@ -96,6 +98,9 @@ contract LimitOrderRouterTest is Test {
     // sign order
     bytes memory signature = getOrderSignature(order);
 
+    console.log("L");
+    console.log(signature.length);
+
     vm.prank(WETH_OWNER);
     IERC20(order.input.tokenAddress).transfer(SIGNER_ADDRESS, order.input.tokenAmount);
 
@@ -182,5 +187,88 @@ contract LimitOrderRouterTest is Test {
 
     vm.expectRevert(abi.encodeWithSelector(OrderAlreadyFilledOrCancelled.selector, orderHash));
     ROUTER.fillLimitOrder(order, signature);
+  }
+
+
+  /// Verifies CREATE2 smart contract wallet arguments via deployment
+  function test_Create2Factory_succeeds() public {
+    Create2Factory factory = new Create2Factory();
+    bytes32 salt = keccak256("SOME_RANDOM_SALT");
+
+    LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
+    bytes32 orderHash = ROUTER.getLimitOrderHash(order);
+    // Prepare the bytecode of SimpleContract with constructor argument
+    bytes memory bytecode = type(MockSmartContractWallet).creationCode;
+    bytes memory signature = getOrderSignature(order);
+    bytes memory bytecodeWithArgs = abi.encodePacked(bytecode, abi.encode(orderHash, signature));
+
+    // Deploy SimpleContract using Create2Factory
+    address deployedAddress = factory.deploy(salt, bytecodeWithArgs);
+
+    // bytes4(keccak256("isValidSignature(bytes32,bytes)")
+    bytes4 EIP1271_MAGICVALUE = 0x1626ba7e;
+
+    assertTrue(MockSmartContractWallet(deployedAddress).isValidSignature(orderHash, signature) == EIP1271_MAGICVALUE);
+
+    // Optionally, compute and assert the expected address
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0xff), address(factory), salt, keccak256(bytecodeWithArgs)));
+    address expectedAddress = address(uint160(uint(hash)));
+    assertEq(deployedAddress, expectedAddress);
+  }
+
+  function prepare_EIP6492_deployment(bytes memory expectedOrderSignature, bytes memory actualOrderSignature)
+  public
+  returns (bytes memory eip6492sig, address expectedAddress) {
+    Create2Factory factory = new Create2Factory();
+    bytes32 salt = keccak256("SOME_RANDOM_SALT");
+
+    LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
+    bytes32 orderHash = ROUTER.getLimitOrderHash(order);
+
+    // Prepare the bytecode of MockSmartContractWallet with constructor argument
+    bytes memory bytecode = type(MockSmartContractWallet).creationCode;
+    bytes memory bytecodeWithArgs = abi.encodePacked(bytecode, abi.encode(orderHash, expectedOrderSignature));
+
+    // prepare factory calldata
+    bytes memory factoryCalldata = abi.encodeWithSelector(
+      factory.deploy.selector,
+      salt,
+      bytecodeWithArgs
+    );
+
+    // Compute the smart contract wallet expected address
+    bytes32 hash = keccak256(abi.encodePacked(bytes1(0xff), address(factory), salt, keccak256(bytecodeWithArgs)));
+    expectedAddress = address(uint160(uint(hash)));
+
+    // As per ERC-6492: create2Factory, factoryCalldata, originalSig
+    // The address, bytes, and bytes parameters to be encoded
+    bytes memory encodedData = abi.encode(address(factory), factoryCalldata, actualOrderSignature);
+
+    // The magic suffix to be appended
+    bytes memory magicSuffix = hex"6492649264926492649264926492649264926492649264926492649264926492";
+
+    // Concatenate the encodedData with the magicSuffix
+    eip6492sig = bytes.concat(encodedData, magicSuffix);
+  }
+
+  function test_EIP1271_EIP6492_succeeds() public {
+    LimitOrderRouter.LimitOrder memory order = createDefaultLimitOrder();
+    //bytes32 orderHash = ROUTER.getLimitOrderHash(order);
+    bytes memory signature = getOrderSignature(order);
+
+    // Actual order signature is equal to expected
+    (bytes memory eip6492sig, address expectedSmartWalletAddress) = prepare_EIP6492_deployment(signature, signature);
+
+    console.log(expectedSmartWalletAddress);
+    // Prepend the signature with the smart contract wallet address
+    bytes memory encodedSignature = abi.encodePacked(expectedSmartWalletAddress, eip6492sig);
+
+    vm.prank(WETH_OWNER);
+    IERC20(order.input.tokenAddress).transfer(expectedSmartWalletAddress, order.input.tokenAmount);
+
+    vm.prank(expectedSmartWalletAddress);
+    IERC20(order.input.tokenAddress).approve(address(ROUTER), order.input.tokenAmount);
+
+    ROUTER.fillLimitOrder(order, encodedSignature);
   }
 }
